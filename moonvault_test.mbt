@@ -244,6 +244,49 @@ test "password_needs_rehash" {
   chk(!password_needs_rehash("$2b$10$abc"), "password_needs_rehash: $2b$ should not need rehash")
 }
 
+// Regression tests for password_strength Unicode handling.
+//
+// Bug: password_strength used String::length() and `password[i]`, both of
+// which are UTF-16 code-unit granular. An astral character (e.g. an emoji)
+// counts as 2 units toward the length tiers, and each surrogate code unit
+// falls into the `else` branch and is counted as a "special character"
+// (score +20). Adjacent repeated emoji were not detected as repeats either,
+// because a surrogate pair (high, low) never compares equal to its neighbor.
+//
+// Fix: iterate Unicode scalar values (String::to_array) instead.
+test "password_strength_counts_characters_not_utf16_units" {
+  // "😀" x8 = 8 characters, 16 UTF-16 code units.
+  // Old: +30 length tiers, +20 special (surrogates), 0 repeats -> 50 ("fair")
+  // New: +10 length tier,  +20 special, 7 repeats (-35) -> 0 ("weak")
+  let s = password_strength("😀😀😀😀😀😀😀😀")
+  chk(s == 0, "8 repeated emoji should score 0 (weak), got \{s}")
+  chk_eq(
+    password_strength_level("😀😀😀😀😀😀😀😀"),
+    "weak",
+    "8 repeated emoji should be weak",
+  )
+}
+
+test "password_strength_length_tier_not_inflated_by_emoji" {
+  // "😀" x4 = 4 characters, 8 UTF-16 code units.
+  // Old: len = 8 -> +10 length tier, +20 special -> 30 ("fair")
+  // New: len < 8 -> 0 ("weak")
+  let s = password_strength("😀😀😀😀")
+  chk(s == 0, "4 emoji (4 characters) should score 0 (weak), got \{s}")
+  chk_eq(password_strength_level("😀😀😀😀"), "weak", "4 emoji should be weak")
+}
+
+test "password_strength_ascii_scores_unchanged" {
+  // Lock the scoring semantics for BMP text so the fix stays conservative.
+  chk(password_strength("") == 0, "empty should score 0")
+  chk(password_strength("abcdefgh") == 15, "8 lowercase letters should score 15")
+  chk(password_strength("password1") == 25, "password1 should score 25")
+  chk(
+    password_strength("Aaaaaaa1") == 30,
+    "Aaaaaaa1 should score 30 (10 length + 30 class + 10 bonus - 25 repeats)",
+  )
+}
+
 test "generate_password_length" {
   let pwd = generate_password(16)
   chk(pwd.length() == 16, "generate_password_length: should generate 16 chars")
