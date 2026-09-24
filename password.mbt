@@ -83,8 +83,14 @@ pub fn generate_password(length : Int) -> String {
 }
 
 pub fn password_strength(password : String) -> Int {
+  // String::length() and `password[i]` are UTF-16 code-unit granular: an
+  // astral character (e.g. an emoji) counts as 2 units toward the length
+  // tiers, and every surrogate code unit falls into the `else` branch below
+  // and is scored as a "special character". Iterate Unicode scalar values
+  // instead. (Regression tests: moonvault_test.mbt)
+  let chars = password.to_array()
+  let len = chars.length()
   let mut score = 0
-  let len = password.length()
   if len < 8 { return 0 }
   if len >= 8 { score = score + 10 }
   if len >= 12 { score = score + 10 }
@@ -96,14 +102,11 @@ pub fn password_strength(password : String) -> Int {
   let mut has_digit = false
   let mut has_special = false
 
-  let mut i = 0
-  while i < len {
-    let ch = password[i]
+  for ch in chars {
     if ch >= 'A' && ch <= 'Z' { has_upper = true }
     else if ch >= 'a' && ch <= 'z' { has_lower = true }
     else if ch >= '0' && ch <= '9' { has_digit = true }
     else { has_special = true }
-    i = i + 1
   }
 
   if has_upper { score = score + 15 }
@@ -117,10 +120,8 @@ pub fn password_strength(password : String) -> Int {
   else if total >= 3 { score = score + 10 }
 
   let mut repeats = 0
-  i = 1
-  while i < len {
-    if password[i] == password[i - 1] { repeats = repeats + 1 }
-    i = i + 1
+  for i = 1; i < len; i = i + 1 {
+    if chars[i] == chars[i - 1] { repeats = repeats + 1 }
   }
   if repeats > 0 { score = score - (repeats * 5) }
   if score < 0 { score = 0 }
